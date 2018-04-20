@@ -13,7 +13,7 @@ locpath= getwd()
 setwd(locpath)
 
 library(pacman)
-p_load(ggplot2, rethinking, readxl, brms, metafor, tidyverse, lme4)
+p_load(ggplot2, rethinking, readxl, brms, metafor, tidyverse, lme4, Rstan)
 
 d = read_excel("Assignment4PitchDatav2.xlsx")
 d_meta = read_excel("Assignment4MetaData.xlsx")
@@ -67,19 +67,6 @@ forest(m1)
 # we want to eliminate the need to use random effects (we only want 1 data point per participant)
 # - idea: group by id and summarise mean ?? (then we have a mean for each participant)
 
-#standardize the data
-library(dplyr)
-d_s = scale(d, center = TRUE, scale = TRUE)
-d_s = as.data.frame(d_s)
-
-#take the mean of pitch SD for each participant, so we don't have to use random effects in our model (from 10 datapoints to 1)
-Unique_PitchSD = d_s %>% 
-  group_by(ID) %>% 
-  summarise(Unique_PitchSD = mean(PitchSD))
-  
-d_s = merge(d_s,Unique_PitchSD)
-
-
 ```
 
 
@@ -96,13 +83,19 @@ Step 2: Prepare the pitch SD data from last year
 - We do not know how to build random effects, yet. So we need to simplify the dataset to avoid interdependence between datapoint: How?
 - Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d is measured in SDs).
 
-Step 3: Build a regression model predicting Pitch SD from Diagnosis.
-- how is the outcome distributed? (likelihood function)
-- how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on?
-- use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
-- Describe and plot the estimates. Evaluate model quality
-
 ```{r}
+#standardize the data
+library(dplyr)
+d_s = scale(d, center = TRUE, scale = TRUE)
+d_s = as.data.frame(d_s)
+
+#take the mean of pitch SD for each participant, so we don't have to use random effects in our model (from 10 datapoints to 1)
+Unique_PitchSD = d_s %>% 
+  group_by(ID) %>% 
+  summarise(Unique_PitchSD = mean(PitchSD))
+  
+d_s = merge(d_s,Unique_PitchSD)
+
 # making a data frame with only unstandardised ID and diagnosis and unique pitch SD 
 data = cbind(d$ID, d$diagnosis, d_s$Unique_PitchSD)
 
@@ -114,6 +107,17 @@ data = data[!duplicated(data), ]
 
 # making it a data frame 
 data = as.data.frame(data)
+```
+
+
+Step 3: Build a regression model predicting Pitch SD from Diagnosis.
+- how is the outcome distributed? (likelihood function)
+- how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on?
+- use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
+- Describe and plot the estimates. Evaluate model quality
+
+```{r}
+
 
 # Build a regression model predicting Pitch SD from Diagnosis (w the brm function)
 model <- brm(Unique_PitchSD ~ 1 + diagnosis, data = data, prior = NULL, chains = 2, iter = 2000, cores = 2)
@@ -127,25 +131,25 @@ summary(model)
 # sigma ~ Uniform(0,50)  = sigma prior 
 
 #notes from class
-#use standardized data
-PitchSD ~ Normal(mu, sigma) #because sampling across participants and doing mean. the samples means will be normally distributed
-mu = a + b*Diagnosis #because linear model
-a ~ Normal(0, 1) #0 and 1 because the data is standardized. can vary just as much as data
-b ~ Normal(0, 1) #the beta is telling us about the difference between the two diagnosis, so it is not binomial
-sigma ~ Cauchy(0, 2)#the variance. given the expected mean, how much do we expect the actual value to vary on average. what's the expected error. has to be continuous number above 0 (because you can't have a negative value of error). 2 is about how thick is the long tail. the 0 is where it starts.
-#can also do (not neccessary for the assignment:
-log(sigma) = as + bs*Diagnosis
+# #use standardized data
+# PitchSD ~ Normal(mu, sigma) #because sampling across participants and doing mean. the samples means will be normally distributed
+# mu = a + b*Diagnosis #because linear model
+# a ~ Normal(0, 1) #0 and 1 because the data is standardized. can vary just as much as data
+# b ~ Normal(0, 1) #the beta is telling us about the difference between the two diagnosis, so it is not binomial
+# sigma ~ Cauchy(0, 2)#the variance. given the expected mean, how much do we expect the actual value to vary on average. what's the expected error. has to be continuous number above 0 (because you can't have a negative value of error). 2 is about how thick is the long tail. the 0 is where it starts.
+# #can also do (not neccessary for the assignment:
+# log(sigma) = as + bs*Diagnosis
+# 
+# #how to do random effects (also not neccessary):
+# mu = a[participant] + b[participant]*Diagnosis #means look out, it should be one value for each alpha and beta - each participant has a different value
+# a[participant] ~ Normal(a, 1)
+# a ~ Normal(0, 1)
 
-#how to do random effects (also not neccessary):
-mu = a[participant] + b[participant]*Diagnosis #means look out, it should be one value for each alpha and beta - each participant has a different value
-a[participant] ~ Normal(a, 1)
-a ~ Normal(0, 1)
-
-
-Pitchmodel <- map(
+#model made with map and not conservative
+Pitchmodel <- rethinking::map(
   alist(
     Unique_PitchSD ~ dnorm(mu, sigma),
-    mu <- a + bD * Diagnosis,
+    mu <- a + bD * diagnosis,
     a ~ dnorm(0, 1),
     bD ~ dnorm(0, 1),
     sigma ~ dcauchy(0, 2)
@@ -153,30 +157,86 @@ Pitchmodel <- map(
   data = data
 )
 
-model_nV_S <- map(
-    alist(
-        ADOS ~ dnorm( mu , sigma ) ,
-        mu <- a + bN*NonVerbalIQ + bS*SocialIQ ,
-        a ~ dnorm( -1.07e-16 , 1 ) , #we put mean at ~0, which we can see on the precis plot, where a is right at 0 (because we have standardized the data)
-        bN ~ dnorm(2.66e-16, 1) , 
-        bS ~ dnorm(-1.36e-16, 1) ,
-        sigma ~ dunif( 0 , 1.54 ) #the 89% uncertainty. HAS to be positive
-),
-    data = d2_s )
+precis(Pitchmodel)
+precis_plot(precis(Pitchmodel))
 
+#model made with map2stan and with conservative priors
+Pitchmodel2 <- map2stan(
+  alist(
+    Unique_PitchSD ~ dnorm(mu, sigma),
+    mu <- a + bD * diagnosis,
+    a ~ dnorm(0, 0.1),
+    bD ~ dnorm(0, 0.1),
+    sigma ~ dcauchy(0, 4)
+  ),
+  data = data,
+  chains = 4, cores = 2, iter = 5000, warmup = 3000
+)
 
+precis(Pitchmodel2)
+show(Pitchmodel2)
+post <- extract.samples(Pitchmodel2)
+str(post)
+pairs(post)
+pairs(Pitchmodel2)
 
-
-
+#notes to self: we care most about the beta value because it tells us about the difference between the two groups. the priors (0, 1) are large and we want to be more skeptic. we could do (0, 0.2) -> we expect diff between the two groups to vary from -0.6 to +0.6 (because it is 0.2 = 20% of -3 and 3, which is where the values are (?)). for skeptical prior (0, 0.1) is good - not too skeptical.
 
 
 
 
 ```
+from the pairs plot of the model we can see that alpha and beta for diagnosis are negatively correlated, while sigma is not very correlated with either.
+We chose a prior for the alpha and beta to be (0, 0.1) because we expect the difference between the groups to vary with 10%. We think this is a conservative prior. 
+
+```{r}
+#errors is this?!
+# call link without specifying new data
+# so it uses original data
+mu <- link(Pitchmodel2, na.rm = TRUE)
+# summarize samples across cases
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI )
+# simulate observations
+# again no new data, so uses original data
+model.sim <- sim( Pitchmodel2 , n=1e4 , na.rm = TRUE )
+model.PI <- apply( model.sim , 2 , PI  )
+
+# plot predictions against observed 
+plot( mu.mean ~ data$Unique_PitchSD , col=rangi2 , ylim=range(mu.PI) ,
+    xlab="Observed Pitch SD" , ylab="Predicted Pitch SD" )
+abline( a=0 , b=1 , lty=2 )
+for ( i in 1:nrow(data) )
+    lines( rep(data$Unique_PitchSD[i],2) , c(mu.PI[1,i],mu.PI[2,i]) ,
+        col=rangi2 )
+```
 
 
 Step 4: Now re-run the model with the meta-analytic prior
 - Describe and plot the estimates. Evaluate model quality
+
+```{r}
+#Need to find new priors
+#We have these values from our metaanalysis model: (not all the variables are changed yet to fit our meta model)
+#int = -0.54     se(int) = 0.27       sd(int) = 0.72     se(sd(int)) = 0.28
+a #estimated pitch SD from the controls, so we don't do anything because we don't have any data on this from the meta-analysis
+b ~ Normal(-0,54, 0.27) #from intercept and SE of intercept. SD of intercept could also be used instead of SE but don't do that here.
+sigma #estimated error. don't change it because we dont have data on this from the meta-analysis
+#now we are talking about subjects and not studies.
+
+Pitchmodel2 <- map2stan(
+  alist(
+    Unique_PitchSD ~ dnorm(mu, sigma),
+    mu <- a + bD * diagnosis,
+    a ~ dnorm(0, 0.1),
+    bD ~ dnorm(0, 0.1),
+    sigma ~ dcauchy(0, 4)
+  ),
+  data = data,
+  chains = 4, cores = 2, iter = 5000, warmup = 3000
+)
+```
+
 
 Step 5: Compare the models
 - Plot priors and posteriors of the diagnosis effect in both models
