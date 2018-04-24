@@ -179,6 +179,7 @@ post <- extract.samples(Pitchmodel2)
 str(post)
 pairs(post)
 pairs(Pitchmodel2)
+precis_plot(precis(Pitchmodel2))
 
 #notes to self: we care most about the beta value because it tells us about the difference between the two groups. the priors (0, 1) are large and we want to be more skeptic. we could do (0, 0.2) -> we expect diff between the two groups to vary from -0.6 to +0.6 (because it is 0.2 = 20% of -3 and 3, which is where the values are (?)). for skeptical prior (0, 0.1) is good - not too skeptical.
 
@@ -193,13 +194,13 @@ We chose a prior for the alpha and beta to be (0, 0.1) because we expect the dif
 #errors is this?!
 # call link without specifying new data
 # so it uses original data
-mu <- link(Pitchmodel2, na.rm = TRUE)
+mu <- link(Pitchmodel2)
 # summarize samples across cases
 mu.mean <- apply( mu , 2 , mean )
 mu.PI <- apply( mu , 2 , PI )
 # simulate observations
 # again no new data, so uses original data
-model.sim <- sim( Pitchmodel2 , n=1e4 , na.rm = TRUE )
+model.sim <- sim( fit = Pitchmodel2 , n=1e4  )
 model.PI <- apply( model.sim , 2 , PI  )
 
 # plot predictions against observed 
@@ -209,6 +210,8 @@ abline( a=0 , b=1 , lty=2 )
 for ( i in 1:nrow(data) )
     lines( rep(data$Unique_PitchSD[i],2) , c(mu.PI[1,i],mu.PI[2,i]) ,
         col=rangi2 )
+
+
 ```
 
 
@@ -217,24 +220,28 @@ Step 4: Now re-run the model with the meta-analytic prior
 
 ```{r}
 #Need to find new priors
-#We have these values from our metaanalysis model: (not all the variables are changed yet to fit our meta model)
-#int = -0.54     se(int) = 0.27       sd(int) = 0.72     se(sd(int)) = 0.28
+#We have these values from our metaanalysis model: 
+#int = -0.54     se(int) = 0.25       sd(int) = 0.72     se(sd(int)) = 0.23
 a #estimated pitch SD from the controls, so we don't do anything because we don't have any data on this from the meta-analysis
-b ~ Normal(-0,54, 0.27) #from intercept and SE of intercept. SD of intercept could also be used instead of SE but don't do that here.
+b ~ Normal(-0.54, 0.25) #from intercept and SE of intercept. SD of intercept could also be used instead of SE but don't do that here.
 sigma #estimated error. don't change it because we dont have data on this from the meta-analysis
 #now we are talking about subjects and not studies.
 
-Pitchmodel2 <- map2stan(
+Pitchmodel3 <- map2stan(
   alist(
     Unique_PitchSD ~ dnorm(mu, sigma),
     mu <- a + bD * diagnosis,
     a ~ dnorm(0, 0.1),
-    bD ~ dnorm(0, 0.1),
+    bD ~ dnorm(-0.54, 0.25),
     sigma ~ dcauchy(0, 4)
   ),
   data = data,
   chains = 4, cores = 2, iter = 5000, warmup = 3000
 )
+
+precis(Pitchmodel2)
+pairs(Pitchmodel2)
+precis_plot(precis(Pitchmodel3))
 ```
 
 
