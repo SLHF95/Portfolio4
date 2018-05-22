@@ -51,8 +51,8 @@ Step 1: Reproduce the meta-analysis of pitch sd from previous studies of voice i
 # 
 
 
-model <- brm(MeanES|se(SdES) ~ 1 + (1|StudyRef), data = d_meta, prior = NULL, chains = 2, iter = 2000, cores = 2)
-summary(model)
+ESmodel <- brm(MeanES|se(SdES) ~ 1 + (1|StudyRef), data = d_meta, prior = NULL, chains = 2, iter = 2000, cores = 2)
+summary(ESmodel)
 
 # making a forestplot to visualize data
 m1 = rma(yi = MeanES, vi = SdES, data = d_meta, slab = StudyRef)
@@ -68,7 +68,7 @@ forest(m1)
 # - idea: group by id and summarise mean ?? (then we have a mean for each participant)
 
 ```
-
+*the previous analyses look biased - consequence of using these as meta-analytic priors is that the priors then are biased
 
 BRM is instead of the glmer
 outcome: mean effc´effect size 
@@ -107,6 +107,8 @@ data = data[!duplicated(data), ]
 
 # making it a data frame 
 data = as.data.frame(data)
+
+
 ```
 
 
@@ -120,6 +122,7 @@ Step 3: Build a regression model predicting Pitch SD from Diagnosis.
 
 
 # Build a regression model predicting Pitch SD from Diagnosis (w the brm function)
+#not relevant to answer question but this is how we would build the model with the brms package
 model <- brm(Unique_PitchSD ~ 1 + diagnosis, data = data, prior = NULL, chains = 2, iter = 2000, cores = 2)
 summary(model)
 
@@ -146,6 +149,7 @@ summary(model)
 # a ~ Normal(0, 1)
 
 #model made with map and not conservative
+#not relevant to answer question but this is how we would build the model with map/rethinking package
 Pitchmodel <- rethinking::map(
   alist(
     Unique_PitchSD ~ dnorm(mu, sigma),
@@ -159,6 +163,7 @@ Pitchmodel <- rethinking::map(
 
 precis(Pitchmodel)
 precis_plot(precis(Pitchmodel))
+
 
 #model made with map2stan and with conservative priors
 Pitchmodel2 <- map2stan(
@@ -181,6 +186,8 @@ pairs(post)
 pairs(Pitchmodel2)
 precis_plot(precis(Pitchmodel2))
 
+summary(Pitchmodel2)
+
 #notes to self: we care most about the beta value because it tells us about the difference between the two groups. the priors (0, 1) are large and we want to be more skeptic. we could do (0, 0.2) -> we expect diff between the two groups to vary from -0.6 to +0.6 (because it is 0.2 = 20% of -3 and 3, which is where the values are (?)). for skeptical prior (0, 0.1) is good - not too skeptical.
 
 
@@ -190,29 +197,8 @@ precis_plot(precis(Pitchmodel2))
 from the pairs plot of the model we can see that alpha and beta for diagnosis are negatively correlated, while sigma is not very correlated with either.
 We chose a prior for the alpha and beta to be (0, 0.1) because we expect the difference between the groups to vary with 10%. We think this is a conservative prior. 
 
-```{r}
-#errors is this?!
-# call link without specifying new data
-# so it uses original data
-mu <- link(Pitchmodel2)
-# summarize samples across cases
-mu.mean <- apply( mu , 2 , mean )
-mu.PI <- apply( mu , 2 , PI )
-# simulate observations
-# again no new data, so uses original data
-model.sim <- sim( fit = Pitchmodel2 , n=1e4  )
-model.PI <- apply( model.sim , 2 , PI  )
+Because the beta does not overlap with zero we do get additional predictive power from knowing diagnosis. The relatively large standard deviation tells us that there is some uncertainty of the effect of diagnosis as a predictor.
 
-# plot predictions against observed 
-plot( mu.mean ~ data$Unique_PitchSD , col=rangi2 , ylim=range(mu.PI) ,
-    xlab="Observed Pitch SD" , ylab="Predicted Pitch SD" )
-abline( a=0 , b=1 , lty=2 )
-for ( i in 1:nrow(data) )
-    lines( rep(data$Unique_PitchSD[i],2) , c(mu.PI[1,i],mu.PI[2,i]) ,
-        col=rangi2 )
-
-
-```
 
 
 Step 4: Now re-run the model with the meta-analytic prior
@@ -239,9 +225,11 @@ Pitchmodel3 <- map2stan(
   chains = 4, cores = 2, iter = 5000, warmup = 3000
 )
 
-precis(Pitchmodel2)
+precis(Pitchmodel3)
 pairs(Pitchmodel2)
 precis_plot(precis(Pitchmodel3))
+
+
 ```
 
 
@@ -251,30 +239,29 @@ Step 5: Compare the models
 - Compare their relative distance from truth (WAIC)
 - Discuss how they compare and whether any of them is best.
 
-Step 6: Prepare a nice write up of the analysis and answer the questions at the top.
-
-Optional step 7: how skeptical should a prior be?
-- Try different levels of skepticism and compare them using WAIC.
-
-Optional step 8: Include other predictors
-- Do age, gender and education improve the model?
-- Should they be main effects or interactions?
-
-Optional step 9: Bromance magic.
-- explore the bromance code below including random effects (by default with weakly informative priors)
-- learn how to change the prior
-- explore effects of trial, age, gender, including the appropriate random slopes
-- compare the models you created using WAIC and posterior predictive check (pp_check())
-
-
 ```{r}
+compare(Pitchmodel2, Pitchmodel3)
 
-brm_out <- brm(PitchSD ~ 1 + Diagnosis  +(1|ID_unique/Study), # Outcome as a function of the predictors as in lme4. 
-               data=Data, # Define the data
-               family=gaussian(), # Define the family. 
-               iter = 5000, warmup = 2000, cores = 4)
-summary(brm_out1)
-plot(brm_out1)
+m2samples = extract.samples(Pitchmodel2, n = 1e4)
+m2samples$bp = rnorm(1e4, 0, 0.1)
+type = rep(c("posterior", "prior"), each = 1e4)
+value = c(t(m2samples$bD), t(m2samples$bp))
+m2d = data.frame(value, type)
 
+ggplot(m2d, aes(value, group = type, color = type)) +
+  geom_density() + 
+  theme_minimal()
+
+m3samples = extract.samples(Pitchmodel3, n = 1e4)
+m3samples$bp = rnorm(1e4, -0.54, 0.25)
+type = rep(c("posterior", "prior"), each = 1e4)
+value = c(t(m3samples$bD), t(m3samples$bp))
+m3d = data.frame(value, type)
+
+ggplot(m3d, aes(value, group = type, color = type)) +
+  geom_density() + 
+  theme_minimal()
 ```
 
+
+Step 6: Prepare a nice write up of the analysis and answer the questions at the top.
